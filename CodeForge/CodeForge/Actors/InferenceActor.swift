@@ -131,14 +131,22 @@ actor InferenceActor {
     }
 
     /// Core generation method — streams tokens as strings.
+    ///
+    /// The MLX generate callback receives ALL tokens generated so far,
+    /// so `tokenizer.decode(tokens:)` returns the cumulative text.
+    /// Each yield replaces (not appends to) the previous streaming text.
     private func generate(prompt: String) -> AsyncStream<String> {
         let container = self.modelContainer
+        let logger = self.logger
         return AsyncStream { continuation in
             Task {
                 guard let container else {
+                    logger.warning("generate() called without a loaded model")
                     continuation.finish()
                     return
                 }
+
+                let deadline = ContinuousClock.now + .seconds(30)
 
                 do {
                     try await container.perform { context in
@@ -154,6 +162,7 @@ actor InferenceActor {
                             parameters: .init(temperature: 0.7),
                             context: context
                         ) { tokens in
+                            // tokens contains ALL generated tokens so far (cumulative)
                             let text = context.tokenizer.decode(tokens: tokens)
                             continuation.yield(text)
                             tokenCount = tokens.count
@@ -161,11 +170,17 @@ actor InferenceActor {
                             if Task.isCancelled || tokenCount >= maxTokens {
                                 return .stop
                             }
+                            if ContinuousClock.now >= deadline {
+                                return .stop
+                            }
                             return .more
                         }
                     }
+                } catch is CancellationError {
+                    logger.info("Generation cancelled")
                 } catch {
-                    // Log but don't crash — generation errors are expected
+                    logger.error("Generation failed: \(error.localizedDescription)")
+                    continuation.yield("[Error: \(error.localizedDescription)]")
                 }
 
                 continuation.finish()

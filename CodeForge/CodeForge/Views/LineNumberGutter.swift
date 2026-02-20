@@ -15,10 +15,10 @@ final class LineNumberGutter: NSRulerView {
     private let gutterFont = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular)
     private let padding: CGFloat = 8.0
 
-    init(textView: NSTextView) {
+    init(textView: NSTextView, scrollView: NSScrollView) {
         self.textView = textView
         super.init(
-            scrollView: textView.enclosingScrollView!,
+            scrollView: scrollView,
             orientation: .verticalRuler
         )
         self.clientView = textView
@@ -35,7 +35,7 @@ final class LineNumberGutter: NSRulerView {
             self,
             selector: #selector(boundsDidChange(_:)),
             name: NSView.boundsDidChangeNotification,
-            object: textView.enclosingScrollView?.contentView
+            object: scrollView.contentView
         )
     }
 
@@ -136,7 +136,7 @@ final class LineNumberGutter: NSRulerView {
             line += 1
             pos = NSMaxRange(range)
         }
-        return max(0, line - (charIndex == 0 ? 0 : 0))
+        return max(0, line)
     }
 
     /// Returns the start of the line containing the given character index.

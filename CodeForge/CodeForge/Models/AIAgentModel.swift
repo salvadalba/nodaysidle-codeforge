@@ -14,7 +14,7 @@ enum ModelState: Sendable, Equatable {
 /// Tracks conversation messages, generation state, model lifecycle,
 /// streaming text, and pending edit suggestions.
 @Observable
-final class AIAgentModel: @unchecked Sendable {
+final class AIAgentModel {
     /// Messages in the current conversation.
     var messages: [AIMessage] = []
 

@@ -9,6 +9,7 @@ struct AIAgentView: View {
     @Bindable var model: AIAgentModel
     @Bindable var editorModel: EditorModel
     let inferenceActor: InferenceActor
+    let persistenceService: PersistenceService?
 
     @State private var inputText: String = ""
     @State private var generationTask: Task<Void, Never>?
@@ -141,6 +142,7 @@ struct AIAgentView: View {
                 model.currentStreamingText = text
             }
             model.finalizeAssistantMessage()
+            persistConversation()
         }
     }
 
@@ -169,6 +171,7 @@ struct AIAgentView: View {
                 model.currentStreamingText = text
             }
             model.finalizeAssistantMessage()
+            persistConversation()
         }
     }
 
@@ -199,6 +202,7 @@ struct AIAgentView: View {
                 model.currentStreamingText = text
             }
             model.finalizeAssistantMessage()
+            persistConversation()
 
             // Parse edit suggestions from output
             let suggestions = EditSuggestion.parse(from: fullOutput)
@@ -229,6 +233,12 @@ struct AIAgentView: View {
         } catch {
             model.modelState = .error(error.localizedDescription)
         }
+    }
+
+    private func persistConversation() {
+        guard let service = persistenceService else { return }
+        let filePath = editorModel.fileURL?.path(percentEncoded: false) ?? "untitled"
+        try? service.saveConversation(messages: model.messages, filePath: filePath)
     }
 
     private func extractSelection() -> String {

@@ -145,6 +145,58 @@ actor ParsingActor {
         logger.debug("Incremental parse produced \(ranges.count) highlight ranges")
     }
 
+    // MARK: - Incremental Edit + Deferred Re-parse
+
+    /// Apply a text edit to the current tree without re-parsing.
+    ///
+    /// Call this immediately for each keystroke to keep the tree in sync.
+    /// Then call `reParse(source:)` after a debounce interval.
+    func applyEdit(
+        startByte: UInt32,
+        oldEndByte: UInt32,
+        newEndByte: UInt32,
+        startPoint: Point,
+        oldEndPoint: Point,
+        newEndPoint: Point
+    ) {
+        guard currentTree != nil else { return }
+        let inputEdit = InputEdit(
+            startByte: startByte,
+            oldEndByte: oldEndByte,
+            newEndByte: newEndByte,
+            startPoint: startPoint,
+            oldEndPoint: oldEndPoint,
+            newEndPoint: newEndPoint
+        )
+        currentTree?.edit(inputEdit)
+    }
+
+    /// Re-parse the current (edited) tree and produce highlight ranges.
+    ///
+    /// Uses the tree's dirty regions for incremental parsing.
+    /// Falls back to full parse if no tree exists.
+    func reParse(source: String) {
+        guard let parser else {
+            logger.warning("reParse called without a configured parser")
+            return
+        }
+
+        if currentTree != nil {
+            currentTree = parser.parse(tree: currentTree, string: source)
+        } else {
+            currentTree = parser.parse(source)
+        }
+
+        guard currentTree != nil else {
+            logger.error("Re-parse returned nil tree")
+            return
+        }
+
+        let ranges = executeHighlightQuery(source: source)
+        highlightContinuation?.yield(ranges)
+        logger.debug("Re-parse produced \(ranges.count) highlight ranges")
+    }
+
     // MARK: - Highlight Query Execution
 
     /// Execute the highlight query on the current tree and return ranges.

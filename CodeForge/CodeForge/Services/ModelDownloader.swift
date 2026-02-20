@@ -14,7 +14,12 @@ nonisolated final class ModelDownloader: Sendable {
 
     /// Local directory for downloaded models.
     static var modelsDirectory: URL {
-        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        guard let appSupport = FileManager.default.urls(
+            for: .applicationSupportDirectory, in: .userDomainMask
+        ).first else {
+            return URL(filePath: NSHomeDirectory())
+                .appendingPathComponent("Library/Application Support/CodeForge/Models", isDirectory: true)
+        }
         return appSupport.appendingPathComponent("CodeForge/Models", isDirectory: true)
     }
 

@@ -193,6 +193,7 @@ private struct KeyBindingsSettingsTab: View {
                     .frame(width: 160)
                     .onChange(of: bindings[index].keyCombination) {
                         checkConflict(at: index)
+                        saveBindings()
                     }
                 }
             }
@@ -204,6 +205,30 @@ private struct KeyBindingsSettingsTab: View {
             }
         }
         .formStyle(.grouped)
+        .onAppear { loadBindings() }
+    }
+
+    private func loadBindings() {
+        guard let service = PersistenceService.shared else { return }
+        if let stored = try? service.fetchKeyBindings(), !stored.isEmpty {
+            bindings = stored.map { ($0.action, $0.keyCombination) }
+        }
+    }
+
+    private func saveBindings() {
+        guard let service = PersistenceService.shared else { return }
+        let context = service.modelContainer.mainContext
+        // Delete existing bindings and replace with current state
+        if let existing = try? service.fetchKeyBindings() {
+            for binding in existing {
+                context.delete(binding)
+            }
+        }
+        for binding in bindings {
+            let kb = KeyBinding(action: binding.action, keyCombination: binding.keyCombination)
+            context.insert(kb)
+        }
+        try? context.save()
     }
 
     private func checkConflict(at index: Int) {

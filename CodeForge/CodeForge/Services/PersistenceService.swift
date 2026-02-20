@@ -30,6 +30,7 @@ enum PersistenceError: Error, LocalizedError, Sendable {
 /// Provides CRUD operations for all @Model types, LRU eviction for
 /// RecentFile (20) and AIConversation (50), encrypted conversation
 /// storage, and default UserPreferences creation on first launch.
+@MainActor
 final class PersistenceService {
     private static let logger = Logger(subsystem: "com.codeforge.app", category: "persistence")
     private static let recentFileLimit = 20
@@ -39,10 +40,9 @@ final class PersistenceService {
     let encryptionService: EncryptionService
 
     /// Production singleton — call `bootstrap()` once at app launch.
-    @MainActor private(set) static var shared: PersistenceService?
+    private(set) static var shared: PersistenceService?
 
     /// Initializes the shared instance. Safe to call multiple times (no-ops after first).
-    @MainActor
     static func bootstrap() async throws {
         guard shared == nil else { return }
         shared = try await PersistenceService()

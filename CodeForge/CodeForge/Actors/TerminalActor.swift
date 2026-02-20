@@ -65,13 +65,15 @@ actor TerminalActor {
 
         if pid == 0 {
             // Child process — exec the shell
-            setupChildEnvironment()
             let shell = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
-            var args: [UnsafeMutablePointer<CChar>?] = [
-                strdup(shell), strdup("--login"), nil,
-            ]
+            setupChildEnvironment()
+            let arg0 = strdup(shell)
+            let arg1 = strdup("--login")
+            var args: [UnsafeMutablePointer<CChar>?] = [arg0, arg1, nil]
             execv(shell, &args)
-            // execv only returns on failure
+            // execv only returns on failure — free allocations before exit
+            free(arg0)
+            free(arg1)
             _exit(1)
         }
 
@@ -97,7 +99,10 @@ actor TerminalActor {
         env["COLUMNS"] = "\(cols)"
         env["LINES"] = "\(rows)"
 
-        // Clear and set environment
+        // Clear existing environment, then set only inherited vars
+        for (key, _) in ProcessInfo.processInfo.environment {
+            unsetenv(key)
+        }
         for (key, value) in env {
             setenv(key, value, 1)
         }

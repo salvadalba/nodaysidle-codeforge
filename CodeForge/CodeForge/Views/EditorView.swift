@@ -1,4 +1,5 @@
 import AppKit
+import SwiftTreeSitter
 import SwiftUI
 
 /// NSViewRepresentable wrapping an NSTextView (TextKit 1) for code editing.
@@ -62,7 +63,7 @@ struct EditorView: NSViewRepresentable {
         scrollView.documentView = textView
 
         // Line number gutter
-        let gutter = LineNumberGutter(textView: textView)
+        let gutter = LineNumberGutter(textView: textView, scrollView: scrollView)
         scrollView.verticalRulerView = gutter
         scrollView.hasVerticalRuler = true
         scrollView.rulersVisible = true
@@ -125,7 +126,7 @@ struct EditorView: NSViewRepresentable {
         let bufferedStart = characterOffset(forLine: startLine, in: source)
         let bufferedEnd = characterOffset(forLine: endLine, in: source)
 
-        let textStorage = textView.textStorage!
+        guard let textStorage = textView.textStorage else { return }
 
         textStorage.beginEditing()
 
@@ -136,8 +137,8 @@ struct EditorView: NSViewRepresentable {
                 continue
             }
 
-            let startUTF16 = String(utf8[utf8.startIndex..<startIndex])!.utf16.count
-            let length = String(utf8[startIndex..<endIndex])!.utf16.count
+            let startUTF16 = String(decoding: utf8[utf8.startIndex..<startIndex], as: UTF8.self).utf16.count
+            let length = String(decoding: utf8[startIndex..<endIndex], as: UTF8.self).utf16.count
             let nsRange = NSRange(location: startUTF16, length: length)
 
             // Skip ranges outside our buffer
@@ -194,10 +195,62 @@ struct EditorView: NSViewRepresentable {
         private static let undoCoalescingInterval: TimeInterval = 0.3
 
         private var parseTask: Task<Void, Never>?
+        /// Whether any tree edits were applied since last re-parse.
+        private var hasTreeEdits = false
 
         init(model: EditorModel, parsingActor: ParsingActor) {
             self.model = model
             self.parsingActor = parsingActor
+        }
+
+        // MARK: - NSTextViewDelegate
+
+        func textView(
+            _ textView: NSTextView,
+            shouldChangeTextIn affectedCharRange: NSRange,
+            replacementString: String?
+        ) -> Bool {
+            guard !isUpdatingFromSwiftUI else { return true }
+            guard let replacementString else { return true }
+
+            // Compute byte offsets and apply edit to the tree immediately
+            let source = textView.string
+            let utf16 = source.utf16
+
+            guard let rangeStart = utf16.index(
+                utf16.startIndex,
+                offsetBy: affectedCharRange.location,
+                limitedBy: utf16.endIndex
+            ) else { return true }
+
+            guard let rangeEnd = utf16.index(
+                rangeStart,
+                offsetBy: affectedCharRange.length,
+                limitedBy: utf16.endIndex
+            ) else { return true }
+
+            let startByte = UInt32(source.utf8.distance(from: source.utf8.startIndex, to: rangeStart))
+            let oldEndByte = UInt32(source.utf8.distance(from: source.utf8.startIndex, to: rangeEnd))
+            let newEndByte = startByte + UInt32(replacementString.utf8.count)
+
+            let startPoint = computePoint(at: rangeStart, in: source)
+            let oldEndPoint = computePoint(at: rangeEnd, in: source)
+            let newEndPoint = computeNewEndPoint(from: startPoint, replacement: replacementString)
+
+            let actor = parsingActor
+            hasTreeEdits = true
+            Task {
+                await actor.applyEdit(
+                    startByte: startByte,
+                    oldEndByte: oldEndByte,
+                    newEndByte: newEndByte,
+                    startPoint: startPoint,
+                    oldEndPoint: oldEndPoint,
+                    newEndPoint: newEndPoint
+                )
+            }
+
+            return true
         }
 
         func textDidChange(_ notification: Notification) {
@@ -215,7 +268,7 @@ struct EditorView: NSViewRepresentable {
             // Update gutter
             gutter?.needsDisplay = true
 
-            // Trigger debounced re-parse
+            // Trigger debounced re-parse (incremental if tree edits were applied)
             scheduleReparse(source: textView.string)
         }
 
@@ -226,16 +279,57 @@ struct EditorView: NSViewRepresentable {
             gutter?.needsDisplay = true
         }
 
+        // MARK: - Parsing
+
         private func scheduleReparse(source: String) {
             parseTask?.cancel()
             model.isParsing = true
             let actor = parsingActor
+            let incremental = hasTreeEdits
+            hasTreeEdits = false
             parseTask = Task {
                 // 50ms debounce to coalesce rapid keystrokes
                 try? await Task.sleep(for: .milliseconds(50))
                 guard !Task.isCancelled else { return }
-                await actor.fullParse(source: source)
+                if incremental {
+                    await actor.reParse(source: source)
+                } else {
+                    await actor.fullParse(source: source)
+                }
             }
+        }
+
+        // MARK: - Point Computation
+
+        /// Compute TreeSitter Point (row, column-in-bytes) at a String.Index.
+        private nonisolated func computePoint(at index: String.Index, in string: String) -> Point {
+            let utf8 = string.utf8
+            var row: UInt32 = 0
+            var col: UInt32 = 0
+            for byte in utf8[utf8.startIndex..<index] {
+                if byte == UInt8(ascii: "\n") {
+                    row += 1
+                    col = 0
+                } else {
+                    col += 1
+                }
+            }
+            return Point(row: row, column: col)
+        }
+
+        /// Compute end point after inserting replacement text at startPoint.
+        private nonisolated func computeNewEndPoint(from startPoint: Point, replacement: String) -> Point {
+            var row = startPoint.row
+            var col = startPoint.column
+            for byte in replacement.utf8 {
+                if byte == UInt8(ascii: "\n") {
+                    row += 1
+                    col = 0
+                } else {
+                    col += 1
+                }
+            }
+            return Point(row: row, column: col)
         }
 
         private func coalesceUndoGroup(for textView: NSTextView) {

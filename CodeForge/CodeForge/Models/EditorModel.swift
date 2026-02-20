@@ -28,7 +28,7 @@ enum SourceLanguage: String, Sendable {
 /// Tracks document content, cursor/selection state, language, and
 /// syntax highlight ranges produced by ParsingActor.
 @Observable
-final class EditorModel: @unchecked Sendable {
+final class EditorModel {
     /// The full source text of the open document.
     var content: String = ""
 

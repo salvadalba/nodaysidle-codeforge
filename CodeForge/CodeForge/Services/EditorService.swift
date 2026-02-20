@@ -125,10 +125,7 @@ final class EditorService {
         panel.canChooseFiles = true
         panel.canChooseDirectories = false
         panel.allowsMultipleSelection = false
-        panel.allowedContentTypes = [
-            .init(filenameExtension: "swift")!,
-            .init(filenameExtension: "py")!,
-        ]
+        panel.allowedContentTypes = [.swiftSource, .pythonScript]
         panel.message = "Select a .swift or .py file to edit"
 
         guard panel.runModal() == .OK else { return nil }
@@ -153,10 +150,7 @@ final class EditorService {
     @MainActor
     func showSavePanel(content: String, suggestedName: String?) throws(EditorError) -> URL? {
         let panel = NSSavePanel()
-        panel.allowedContentTypes = [
-            .init(filenameExtension: "swift")!,
-            .init(filenameExtension: "py")!,
-        ]
+        panel.allowedContentTypes = [.swiftSource, .pythonScript]
         if let name = suggestedName {
             panel.nameFieldStringValue = name
         }
@@ -249,6 +243,9 @@ final class EditorService {
     }
 
     /// Resolve a previously stored security-scoped bookmark.
+    ///
+    /// Starts security-scoped resource access on the returned URL.
+    /// Caller must call `stopAccessing(_:)` when done with the file.
     func resolveBookmark(for path: String) -> URL? {
         guard let data = bookmarkDefaults.data(forKey: "bookmark-\(path)") else {
             return nil
@@ -265,6 +262,15 @@ final class EditorService {
         if isStale {
             storeBookmark(for: url)
         }
+        guard url.startAccessingSecurityScopedResource() else {
+            Self.logger.warning("Failed to start security-scoped access for \(url.lastPathComponent)")
+            return nil
+        }
         return url
+    }
+
+    /// Stop security-scoped resource access for a URL.
+    func stopAccessing(_ url: URL) {
+        url.stopAccessingSecurityScopedResource()
     }
 }

@@ -31,7 +31,8 @@ struct ContentView: View {
                     AIAgentView(
                         model: agentModel,
                         editorModel: editorModel,
-                        inferenceActor: inferenceActor
+                        inferenceActor: inferenceActor,
+                        persistenceService: PersistenceService.shared
                     )
                     .frame(minWidth: 250, idealWidth: 320, maxWidth: 500)
                     .accessibilityLabel("AI Assistant Panel")
@@ -76,7 +77,7 @@ struct ContentView: View {
                 Button {
                     withAnimation { agentModel.isPanelVisible.toggle() }
                 } label: {
-                    Image(systemName: agentModel.isPanelVisible ? "sidebar.right" : "sidebar.right")
+                    Image(systemName: agentModel.isPanelVisible ? "sidebar.trailing" : "sidebar.right")
                 }
                 .help(agentModel.isPanelVisible ? "Hide AI Panel" : "Show AI Panel")
                 .accessibilityLabel(agentModel.isPanelVisible ? "Hide AI Panel" : "Show AI Panel")
