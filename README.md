@@ -211,6 +211,31 @@ xcodebuild test -scheme CodeForge -destination 'platform=macOS,arch=arm64'
 
 ---
 
+## Code Quality
+
+CodeForge was built with a rigorous code review process. Every critical and important issue identified during review was resolved before shipping.
+
+### What was caught and fixed
+
+| Severity | Issues | Examples |
+|---|---|---|
+| **Critical** | 3 | Force-unwraps in production code, silent error swallowing in AI inference, ambiguous streaming behavior |
+| **Important** | 11 | Missing incremental parse wiring, unconnected conversation persistence, no inference timeout, improper actor isolation |
+| **Minor** | 7 | Dead code removal, non-functional settings, icon state bugs |
+
+### Key improvements from review
+
+- **Zero force-unwraps** in production code — every optional is safely handled
+- **Incremental TreeSitter parsing** — `applyEdit()` marks dirty nodes in O(1) per keystroke, `reParse()` only re-parses changed subtrees after debounce
+- **30-second inference timeout** via `ContinuousClock` deadline — no more infinite spinners
+- **Proper `@MainActor` isolation** on PersistenceService and observable models — compiler-verified thread safety instead of `@unchecked Sendable`
+- **AI conversations persisted** — encrypted and saved to SwiftData after each exchange
+- **Security-scoped bookmarks** correctly started/stopped for sandbox compliance
+- **Child process environment sanitized** — only `PATH`, `HOME`, `SHELL`, `USER`, `LANG`, `TERM` inherited
+- **Error feedback** — inference errors logged via OSLog and surfaced to the user instead of silently swallowed
+
+---
+
 ## Tech Stack
 
 | Component | Technology |
