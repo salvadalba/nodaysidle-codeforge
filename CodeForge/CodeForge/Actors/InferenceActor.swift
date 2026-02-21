@@ -135,11 +135,14 @@ actor InferenceActor {
     /// The MLX generate callback receives ALL tokens generated so far,
     /// so `tokenizer.decode(tokens:)` returns the cumulative text.
     /// Each yield replaces (not appends to) the previous streaming text.
+    /// H4 fix: use withTaskCancellationHandler so that when the caller's Task
+    /// is cancelled, the inner generation also stops. The cancellation flag is
+    /// checked inside the MLX callback.
     private func generate(prompt: String) -> AsyncStream<String> {
         let container = self.modelContainer
         let logger = self.logger
         return AsyncStream { continuation in
-            Task {
+            let task = Task {
                 guard let container else {
                     logger.warning("generate() called without a loaded model")
                     continuation.finish()
@@ -185,6 +188,8 @@ actor InferenceActor {
 
                 continuation.finish()
             }
+            // Cancel inner task when the stream consumer cancels
+            continuation.onTermination = { _ in task.cancel() }
         }
     }
 

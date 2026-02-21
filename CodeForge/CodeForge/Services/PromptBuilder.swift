@@ -118,7 +118,8 @@ nonisolated struct PromptBuilder: Sendable {
         centerByte: Int,
         budget: Int
     ) -> String {
-        guard content.count > budget else { return content }
+        // M6 fix: use utf8 byte count consistently (budget is byte-based)
+        guard content.utf8.count > budget else { return content }
 
         let lines = content.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
         guard !lines.isEmpty else { return content }
@@ -138,12 +139,12 @@ nonisolated struct PromptBuilder: Sendable {
         // Expand window from center until budget is reached
         var start = centerLine
         var end = centerLine
-        var currentSize = lines[centerLine].count
+        var currentSize = lines[centerLine].utf8.count
 
         while start > 0 || end < lines.count - 1 {
             // Try expanding upward
             if start > 0 {
-                let lineSize = lines[start - 1].count + 1
+                let lineSize = lines[start - 1].utf8.count + 1
                 if currentSize + lineSize > budget { break }
                 start -= 1
                 currentSize += lineSize
@@ -151,7 +152,7 @@ nonisolated struct PromptBuilder: Sendable {
 
             // Try expanding downward
             if end < lines.count - 1 {
-                let lineSize = lines[end + 1].count + 1
+                let lineSize = lines[end + 1].utf8.count + 1
                 if currentSize + lineSize > budget { break }
                 end += 1
                 currentSize += lineSize
@@ -178,11 +179,16 @@ nonisolated struct PromptBuilder: Sendable {
     // MARK: - Injection Prevention
 
     /// Escape potential prompt injection markers in user-provided content.
+    // L2 fix: also escape Unicode lookalikes used as replacements
     func escapeInjectionMarkers(_ text: String) -> String {
         text
-            .replacingOccurrences(of: "--- FILE:", with: "─── FILE:")
-            .replacingOccurrences(of: "--- END FILE", with: "─── END FILE")
-            .replacingOccurrences(of: "<<<EDIT", with: "«EDIT")
-            .replacingOccurrences(of: "EDIT>>>", with: "EDIT»")
+            .replacingOccurrences(of: "--- FILE:", with: "- - - FILE:")
+            .replacingOccurrences(of: "--- END FILE", with: "- - - END FILE")
+            .replacingOccurrences(of: "─── FILE:", with: "- - - FILE:")
+            .replacingOccurrences(of: "─── END FILE", with: "- - - END FILE")
+            .replacingOccurrences(of: "<<<EDIT", with: "< < <EDIT")
+            .replacingOccurrences(of: "EDIT>>>", with: "EDIT> > >")
+            .replacingOccurrences(of: "«EDIT", with: "< < <EDIT")
+            .replacingOccurrences(of: "EDIT»", with: "EDIT> > >")
     }
 }

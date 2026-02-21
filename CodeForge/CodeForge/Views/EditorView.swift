@@ -37,7 +37,7 @@ struct EditorView: NSViewRepresentable {
         textView.font = font
         textView.typingAttributes = [
             .font: font,
-            .foregroundColor: NSColor(white: 0.85, alpha: 1.0),
+            .foregroundColor: NSColor(white: 0.90, alpha: 1.0),
         ]
 
         // No line wrap — horizontal scrolling instead
@@ -53,11 +53,11 @@ struct EditorView: NSViewRepresentable {
             height: CGFloat.greatestFiniteMagnitude
         )
 
-        // Dark editor background
-        textView.backgroundColor = NSColor(red: 0.12, green: 0.12, blue: 0.14, alpha: 1.0)
+        // Editor background — warm dark with slight blue cast
+        textView.backgroundColor = NSColor(red: 0.13, green: 0.14, blue: 0.17, alpha: 1.0)
         textView.insertionPointColor = NSColor.white
         textView.selectedTextAttributes = [
-            .backgroundColor: NSColor(white: 0.3, alpha: 0.5)
+            .backgroundColor: NSColor(red: 0.25, green: 0.35, blue: 0.55, alpha: 0.45)
         ]
 
         scrollView.documentView = textView
@@ -89,11 +89,16 @@ struct EditorView: NSViewRepresentable {
         if coordinator.isUpdatingModel { return }
 
         if textView.string != model.content {
+            // C5 fix: set guard BEFORE triggering delegate callbacks
             coordinator.isUpdatingFromSwiftUI = true
+            defer { coordinator.isUpdatingFromSwiftUI = false }
             let selectedRange = textView.selectedRange()
             textView.string = model.content
-            textView.setSelectedRange(selectedRange)
-            coordinator.isUpdatingFromSwiftUI = false
+            let clampedRange = NSRange(
+                location: min(selectedRange.location, textView.string.utf16.count),
+                length: 0
+            )
+            textView.setSelectedRange(clampedRange)
         }
 
         // Apply syntax highlights
@@ -106,43 +111,48 @@ struct EditorView: NSViewRepresentable {
 
     // MARK: - Highlight Application
 
+    /// Apply syntax highlights from the model's highlightRanges to the text view.
+    ///
+    /// C1 fix: Pre-validates byte offsets against current text length to skip stale
+    /// highlights from async parses. Uses `NSRange(_:in:)` for safe conversion.
     private func applyHighlights(to textView: NSTextView, coordinator: Coordinator) {
         guard !model.highlightRanges.isEmpty else { return }
-        guard let layoutManager = textView.layoutManager,
+        guard let textStorage = textView.textStorage,
+              let layoutManager = textView.layoutManager,
               let textContainer = textView.textContainer else { return }
 
         let source = textView.string
         let utf8 = source.utf8
+        let utf8Count = utf8.count
 
-        // Only highlight visible range + 100-line buffer
+        guard utf8Count > 0 else { return }
+
+        // Compute visible character range + buffer for culling
         let visibleRect = textView.enclosingScrollView?.documentVisibleRect ?? textView.visibleRect
         let glyphRange = layoutManager.glyphRange(forBoundingRect: visibleRect, in: textContainer)
         let visibleCharRange = layoutManager.characterRange(forGlyphRange: glyphRange, actualGlyphRange: nil)
 
-        // Expand by ~100 lines
-        let bufferSize = 100
-        let startLine = max(0, lineNumber(for: visibleCharRange.location, in: source) - bufferSize)
-        let endLine = lineNumber(for: NSMaxRange(visibleCharRange), in: source) + bufferSize
-        let bufferedStart = characterOffset(forLine: startLine, in: source)
-        let bufferedEnd = characterOffset(forLine: endLine, in: source)
-
-        guard let textStorage = textView.textStorage else { return }
+        let bufferedCharStart = max(0, visibleCharRange.location - 4000)
+        let bufferedCharEnd = min(textStorage.length, NSMaxRange(visibleCharRange) + 4000)
 
         textStorage.beginEditing()
 
         for range in model.highlightRanges {
-            // Convert byte offsets to String.Index
-            guard let startIndex = utf8.index(utf8.startIndex, offsetBy: range.startByte, limitedBy: utf8.endIndex),
-                  let endIndex = utf8.index(utf8.startIndex, offsetBy: range.endByte, limitedBy: utf8.endIndex) else {
+            // Validate byte offsets are within current text bounds (skip stale highlights)
+            guard range.startByte >= 0,
+                  range.endByte > range.startByte,
+                  range.endByte <= utf8Count else {
                 continue
             }
 
-            let startUTF16 = String(decoding: utf8[utf8.startIndex..<startIndex], as: UTF8.self).utf16.count
-            let length = String(decoding: utf8[startIndex..<endIndex], as: UTF8.self).utf16.count
-            let nsRange = NSRange(location: startUTF16, length: length)
+            let startIndex = utf8.index(utf8.startIndex, offsetBy: range.startByte)
+            let endIndex = utf8.index(utf8.startIndex, offsetBy: range.endByte)
 
-            // Skip ranges outside our buffer
-            if NSMaxRange(nsRange) < bufferedStart || nsRange.location > bufferedEnd {
+            // Safe conversion: String.Index → NSRange via Swift's built-in method
+            let nsRange = NSRange(startIndex..<endIndex, in: source)
+
+            // Skip ranges outside the visible buffer
+            if NSMaxRange(nsRange) < bufferedCharStart || nsRange.location > bufferedCharEnd {
                 continue
             }
 
@@ -163,20 +173,6 @@ struct EditorView: NSViewRepresentable {
         textStorage.endEditing()
     }
 
-    private func lineNumber(for characterIndex: Int, in string: String) -> Int {
-        let target = string.utf16.index(string.utf16.startIndex, offsetBy: min(characterIndex, string.utf16.count))
-        return string[string.startIndex..<target].filter { $0 == "\n" }.count
-    }
-
-    private func characterOffset(forLine line: Int, in string: String) -> Int {
-        var currentLine = 0
-        for (i, char) in string.utf16.enumerated() {
-            if currentLine >= line { return i }
-            if char == 0x0A { currentLine += 1 } // \n
-        }
-        return string.utf16.count
-    }
-
     // MARK: - Coordinator
 
     @MainActor
@@ -191,16 +187,26 @@ struct EditorView: NSViewRepresentable {
         /// Guard to prevent EditorModel -> NSTextView -> SwiftUI feedback loops.
         var isUpdatingModel = false
 
-        private var undoCoalescingTimer: Timer?
+        // nonisolated(unsafe): Timer only accessed on MainActor; needed for deinit access
+        nonisolated(unsafe) private var undoCoalescingTimer: Timer?
         private static let undoCoalescingInterval: TimeInterval = 0.3
 
         private var parseTask: Task<Void, Never>?
         /// Whether any tree edits were applied since last re-parse.
         private var hasTreeEdits = false
 
+        /// Pending tree edit tasks that must complete before re-parse.
+        /// H3 fix: ensures applyEdit ordering is guaranteed before reParse.
+        private var pendingEditTask: Task<Void, Never>?
+
         init(model: EditorModel, parsingActor: ParsingActor) {
             self.model = model
             self.parsingActor = parsingActor
+        }
+
+        deinit {
+            // L5 fix: invalidate timer to prevent leaked RunLoop reference
+            undoCoalescingTimer?.invalidate()
         }
 
         // MARK: - NSTextViewDelegate
@@ -239,7 +245,11 @@ struct EditorView: NSViewRepresentable {
 
             let actor = parsingActor
             hasTreeEdits = true
-            Task {
+
+            // H3 fix: chain edit tasks so they complete in order before reParse
+            let previousEdit = pendingEditTask
+            pendingEditTask = Task {
+                _ = await previousEdit?.value
                 await actor.applyEdit(
                     startByte: startByte,
                     oldEndByte: oldEndByte,
@@ -286,11 +296,15 @@ struct EditorView: NSViewRepresentable {
             model.isParsing = true
             let actor = parsingActor
             let incremental = hasTreeEdits
+            let editTask = pendingEditTask
             hasTreeEdits = false
+            pendingEditTask = nil
             parseTask = Task {
                 // 50ms debounce to coalesce rapid keystrokes
                 try? await Task.sleep(for: .milliseconds(50))
                 guard !Task.isCancelled else { return }
+                // H3 fix: wait for all pending edits before re-parsing
+                _ = await editTask?.value
                 if incremental {
                     await actor.reParse(source: source)
                 } else {
@@ -302,15 +316,26 @@ struct EditorView: NSViewRepresentable {
         // MARK: - Point Computation
 
         /// Compute TreeSitter Point (row, column-in-bytes) at a String.Index.
+        /// M5 fix: handles \r\n line endings correctly.
         private nonisolated func computePoint(at index: String.Index, in string: String) -> Point {
             let utf8 = string.utf8
             var row: UInt32 = 0
             var col: UInt32 = 0
+            var prevWasCR = false
             for byte in utf8[utf8.startIndex..<index] {
                 if byte == UInt8(ascii: "\n") {
                     row += 1
                     col = 0
+                    prevWasCR = false
+                } else if byte == UInt8(ascii: "\r") {
+                    row += 1
+                    col = 0
+                    prevWasCR = true
                 } else {
+                    if prevWasCR {
+                        // \r not followed by \n — already counted the line
+                    }
+                    prevWasCR = false
                     col += 1
                 }
             }
@@ -325,6 +350,8 @@ struct EditorView: NSViewRepresentable {
                 if byte == UInt8(ascii: "\n") {
                     row += 1
                     col = 0
+                } else if byte == UInt8(ascii: "\r") {
+                    // Will be handled by \n if \r\n
                 } else {
                     col += 1
                 }

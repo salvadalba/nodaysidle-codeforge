@@ -21,9 +21,10 @@ actor ParsingActor {
     /// Stream of highlight ranges produced after each parse.
     nonisolated let highlightStream: AsyncStream<[HighlightRange]>
 
+    // C2 fix: use withContinuation pattern instead of IUO
     init() {
-        var continuation: AsyncStream<[HighlightRange]>.Continuation!
-        highlightStream = AsyncStream { continuation = $0 }
+        let (stream, continuation) = AsyncStream<[HighlightRange]>.makeStream()
+        self.highlightStream = stream
         self.highlightContinuation = continuation
         logger.info("ParsingActor initialized")
     }

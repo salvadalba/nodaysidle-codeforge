@@ -1,5 +1,8 @@
+import OSLog
 import SwiftData
 import SwiftUI
+
+private let settingsLogger = Logger(subsystem: "com.codeforge.app", category: "settings")
 
 /// Settings scene with tabs for Appearance, Editor, AI, and Key Bindings.
 struct SettingsView: View {
@@ -41,14 +44,17 @@ private struct AppearanceSettingsTab: View {
 
     private func loadPreferences() {
         guard let service = PersistenceService.shared else { return }
-        if let prefs = try? service.fetchPreferences() {
+        do {
+            let prefs = try service.fetchPreferences()
             theme = prefs.theme
+        } catch {
+            settingsLogger.error("Failed to load appearance prefs: \(error.localizedDescription)")
         }
     }
 
     private func savePreferences() {
         guard let service = PersistenceService.shared else { return }
-        if let prefs = try? service.fetchPreferences() {
+        if let prefs = try? service.fetchPreferences() { // save path — non-critical
             prefs.theme = theme
             prefs.updatedAt = Date()
             try? service.modelContainer.mainContext.save()
@@ -99,7 +105,7 @@ private struct EditorSettingsTab: View {
 
     private func loadPreferences() {
         guard let service = PersistenceService.shared else { return }
-        if let prefs = try? service.fetchPreferences() {
+        if let prefs = try? service.fetchPreferences() { // save path — non-critical
             fontName = prefs.fontName
             fontSize = prefs.fontSize
             scrollbackLines = prefs.scrollbackLines
@@ -108,7 +114,7 @@ private struct EditorSettingsTab: View {
 
     private func savePreferences() {
         guard let service = PersistenceService.shared else { return }
-        if let prefs = try? service.fetchPreferences() {
+        if let prefs = try? service.fetchPreferences() { // save path — non-critical
             prefs.fontName = fontName
             prefs.fontSize = fontSize
             prefs.scrollbackLines = scrollbackLines
@@ -150,14 +156,14 @@ private struct AISettingsTab: View {
 
     private func loadPreferences() {
         guard let service = PersistenceService.shared else { return }
-        if let prefs = try? service.fetchPreferences() {
+        if let prefs = try? service.fetchPreferences() { // save path — non-critical
             cloudKitSyncEnabled = prefs.cloudKitSyncEnabled
         }
     }
 
     private func savePreferences() {
         guard let service = PersistenceService.shared else { return }
-        if let prefs = try? service.fetchPreferences() {
+        if let prefs = try? service.fetchPreferences() { // save path — non-critical
             prefs.cloudKitSyncEnabled = cloudKitSyncEnabled
             prefs.updatedAt = Date()
             try? service.modelContainer.mainContext.save()

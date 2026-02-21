@@ -13,7 +13,8 @@ struct TerminalView: NSViewRepresentable {
         scrollView.hasHorizontalScroller = false
         scrollView.autohidesScrollers = true
         scrollView.drawsBackground = true
-        scrollView.backgroundColor = NSColor(red: 0.1, green: 0.1, blue: 0.12, alpha: 1.0)
+        // UI brightness fix: match editor background tone
+        scrollView.backgroundColor = NSColor(red: 0.11, green: 0.12, blue: 0.15, alpha: 1.0)
 
         let textView = TerminalTextView()
         textView.isEditable = false
@@ -21,8 +22,8 @@ struct TerminalView: NSViewRepresentable {
         textView.isRichText = true
         textView.usesFontPanel = false
         textView.drawsBackground = true
-        textView.backgroundColor = NSColor(red: 0.1, green: 0.1, blue: 0.12, alpha: 1.0)
-        textView.insertionPointColor = NSColor.green
+        textView.backgroundColor = NSColor(red: 0.11, green: 0.12, blue: 0.15, alpha: 1.0)
+        textView.insertionPointColor = NSColor(red: 0.4, green: 0.9, blue: 0.5, alpha: 1.0)
         textView.isAutomaticQuoteSubstitutionEnabled = false
         textView.isAutomaticDashSubstitutionEnabled = false
         textView.isAutomaticTextReplacementEnabled = false
@@ -33,7 +34,7 @@ struct TerminalView: NSViewRepresentable {
         textView.font = font
         textView.typingAttributes = [
             .font: font,
-            .foregroundColor: NSColor(white: 0.85, alpha: 1.0),
+            .foregroundColor: NSColor(white: 0.90, alpha: 1.0),
         ]
 
         // No line wrap

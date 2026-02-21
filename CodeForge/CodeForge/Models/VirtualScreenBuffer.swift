@@ -23,9 +23,11 @@ nonisolated enum TermColor: Sendable, Equatable {
     var nsColor: NSColor {
         switch self {
         case .default:
-            return NSColor(white: 0.85, alpha: 1.0)
+            // UI brightness fix: brighter default terminal text
+            return NSColor(white: 0.90, alpha: 1.0)
         case .defaultBackground:
-            return NSColor(red: 0.1, green: 0.1, blue: 0.12, alpha: 1.0)
+            // UI brightness fix: match terminal background to editor tone
+            return NSColor(red: 0.11, green: 0.12, blue: 0.15, alpha: 1.0)
         case .standard(let idx):
             return Self.standardColor(idx)
         case .palette(let idx):

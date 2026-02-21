@@ -52,7 +52,7 @@ struct EditSuggestionOverlay: View {
     // MARK: - Actions
 
     private func accept(_ suggestion: EditSuggestion) {
-        applySuggestion(suggestion)
+        guard applySuggestion(suggestion) else { return }
         agentModel.pendingSuggestions.removeAll { $0.id == suggestion.id }
     }
 
@@ -64,7 +64,7 @@ struct EditSuggestionOverlay: View {
         // Apply in reverse order so byte offsets remain valid
         let sorted = agentModel.pendingSuggestions.sorted { $0.startByte > $1.startByte }
         for suggestion in sorted {
-            applySuggestion(suggestion)
+            _ = applySuggestion(suggestion)
         }
         agentModel.pendingSuggestions.removeAll()
     }
@@ -73,17 +73,42 @@ struct EditSuggestionOverlay: View {
         agentModel.pendingSuggestions.removeAll()
     }
 
-    private func applySuggestion(_ suggestion: EditSuggestion) {
+    /// C4 fix: validate that the original text at the byte range still matches
+    /// the suggestion's expected original text before applying.
+    /// Returns false if the suggestion is stale.
+    @discardableResult
+    private func applySuggestion(_ suggestion: EditSuggestion) -> Bool {
         let content = editorModel.content
         let utf8 = content.utf8
-        guard let start = utf8.index(utf8.startIndex, offsetBy: suggestion.startByte, limitedBy: utf8.endIndex),
-              let end = utf8.index(utf8.startIndex, offsetBy: suggestion.endByte, limitedBy: utf8.endIndex) else {
-            return
+        let utf8Count = utf8.count
+
+        // Validate byte offsets
+        guard suggestion.startByte >= 0,
+              suggestion.endByte > suggestion.startByte,
+              suggestion.endByte <= utf8Count else {
+            return false
         }
-        let startStr = String.Index(start, within: content) ?? content.startIndex
-        let endStr = String.Index(end, within: content) ?? content.endIndex
+
+        let startIndex = utf8.index(utf8.startIndex, offsetBy: suggestion.startByte)
+        let endIndex = utf8.index(utf8.startIndex, offsetBy: suggestion.endByte)
+
+        guard let startStr = String.Index(startIndex, within: content),
+              let endStr = String.Index(endIndex, within: content) else {
+            return false
+        }
+
+        // Verify the text at this range still matches the expected original
+        let currentText = String(content[startStr..<endStr])
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let expectedText = suggestion.original
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard currentText == expectedText else {
+            return false
+        }
+
         editorModel.content.replaceSubrange(startStr..<endStr, with: suggestion.replacement)
         editorModel.isDirty = true
+        return true
     }
 }
 

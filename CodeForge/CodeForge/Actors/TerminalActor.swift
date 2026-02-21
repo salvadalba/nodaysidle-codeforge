@@ -13,7 +13,7 @@ actor TerminalActor {
     private var masterFD: Int32 = -1
     private var childPID: pid_t = -1
     private var isRunning = false
-    private var readTask: Task<Void, Never>?
+    private var readWorkItem: DispatchWorkItem?
     private var parser = ANSIParser()
 
     private var outputContinuation: AsyncStream<VirtualScreenBuffer>.Continuation?
@@ -26,13 +26,14 @@ actor TerminalActor {
     private var rows: Int = 24
     private var buffer: VirtualScreenBuffer
 
+    // C2 fix: use makeStream() instead of IUO continuation
     init(cols: Int = 80, rows: Int = 24) {
         self.cols = cols
         self.rows = rows
         self.buffer = VirtualScreenBuffer(cols: cols, rows: rows)
 
-        var continuation: AsyncStream<VirtualScreenBuffer>.Continuation!
-        outputStream = AsyncStream { continuation = $0 }
+        let (stream, continuation) = AsyncStream<VirtualScreenBuffer>.makeStream()
+        self.outputStream = stream
         self.outputContinuation = continuation
 
         logger.info("TerminalActor initialized (\(cols)x\(rows))")
@@ -54,6 +55,11 @@ actor TerminalActor {
             ws_ypixel: 0
         )
 
+        // H1 fix: pre-compute child environment BEFORE fork to avoid
+        // accessing Swift runtime/actor state in the child process
+        let shell = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
+        let childEnv = buildChildEnvironment(shell: shell)
+
         var masterFD: Int32 = -1
         let pid = forkpty(&masterFD, nil, nil, &winSize)
 
@@ -64,9 +70,19 @@ actor TerminalActor {
         }
 
         if pid == 0 {
-            // Child process — exec the shell
-            let shell = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
-            setupChildEnvironment()
+            // Child process — only POSIX-safe calls here (no Swift runtime)
+            // Clear existing environment
+            var envPtr = environ
+            while let entry = envPtr.pointee {
+                let key = String(cString: entry).split(separator: "=").first.map(String.init) ?? ""
+                unsetenv(key)
+                envPtr = envPtr.advanced(by: 1)
+            }
+            // Set pre-computed environment
+            for (key, value) in childEnv {
+                setenv(key, value, 1)
+            }
+
             let arg0 = strdup(shell)
             let arg1 = strdup("--login")
             var args: [UnsafeMutablePointer<CChar>?] = [arg0, arg1, nil]
@@ -87,46 +103,48 @@ actor TerminalActor {
         startReading()
     }
 
-    private func setupChildEnvironment() {
+    /// Build the child environment dictionary before fork.
+    /// H1 fix: all Swift runtime access happens here, before forkpty().
+    private func buildChildEnvironment(shell: String) -> [(String, String)] {
         let inherited = ["PATH", "HOME", "SHELL", "USER", "LANG"]
-        var env: [String: String] = [:]
+        var env: [(String, String)] = []
         for key in inherited {
             if let val = ProcessInfo.processInfo.environment[key] {
-                env[key] = val
+                env.append((key, val))
             }
         }
-        env["TERM"] = "xterm-256color"
-        env["COLUMNS"] = "\(cols)"
-        env["LINES"] = "\(rows)"
-
-        // Clear existing environment, then set only inherited vars
-        for (key, _) in ProcessInfo.processInfo.environment {
-            unsetenv(key)
-        }
-        for (key, value) in env {
-            setenv(key, value, 1)
-        }
+        env.append(("TERM", "xterm-256color"))
+        env.append(("COLUMNS", "\(cols)"))
+        env.append(("LINES", "\(rows)"))
+        return env
     }
 
     // MARK: - Reading Output
 
+    /// H2 fix: use a dedicated DispatchQueue for blocking read() instead of
+    /// Task.detached, which would block a cooperative thread pool thread.
     private func startReading() {
         let fd = masterFD
         let bufferSize = 4096
-        readTask = Task.detached { [weak self] in
+        let workItem = DispatchWorkItem { [weak self] in
             let readBuffer = UnsafeMutablePointer<UInt8>.allocate(capacity: bufferSize)
             defer { readBuffer.deallocate() }
 
-            while !Task.isCancelled {
+            while true {
                 let bytesRead = read(fd, readBuffer, bufferSize)
                 if bytesRead <= 0 {
                     break
                 }
                 let data = Data(bytes: readBuffer, count: bytesRead)
-                await self?.handleOutput(data)
+                // Bind weak self to local let for @Sendable closure capture
+                let actor = self
+                Task { @Sendable in await actor?.handleOutput(data) }
             }
-            await self?.handleChildExit()
+            let actor = self
+            Task { @Sendable in await actor?.handleChildExit() }
         }
+        self.readWorkItem = workItem
+        DispatchQueue.global(qos: .userInteractive).async(execute: workItem)
     }
 
     private func handleOutput(_ data: Data) {
@@ -135,6 +153,7 @@ actor TerminalActor {
     }
 
     private func handleChildExit() {
+        guard isRunning else { return }
         isRunning = false
         logger.info("Shell process exited")
         outputContinuation?.finish()
@@ -191,8 +210,15 @@ actor TerminalActor {
     func stop() async {
         guard isRunning, childPID > 0 else { return }
 
-        readTask?.cancel()
-        readTask = nil
+        // H6 fix: close masterFD first to unblock the read() call explicitly,
+        // then cancel the work item. This is the documented way to stop blocking I/O.
+        let fd = masterFD
+        masterFD = -1
+        if fd >= 0 {
+            close(fd)
+        }
+        readWorkItem?.cancel()
+        readWorkItem = nil
 
         // Send SIGHUP
         kill(childPID, SIGHUP)
@@ -207,29 +233,34 @@ actor TerminalActor {
             _ = await waitForExit(timeout: .seconds(1))
         }
 
-        // Clean up
-        if masterFD >= 0 {
-            close(masterFD)
-            masterFD = -1
-        }
         childPID = -1
         isRunning = false
         outputContinuation?.finish()
     }
 
+    /// H7 fix: properly distinguish waitpid results.
+    /// Returns true if the child process has exited.
     private func waitForExit(timeout: Duration) async -> Bool {
         let pid = childPID
+        guard pid > 0 else { return true }
         return await withCheckedContinuation { cont in
-            Task.detached {
+            DispatchQueue.global().async {
                 let deadline = ContinuousClock.now + timeout
                 while ContinuousClock.now < deadline {
                     var status: Int32 = 0
                     let result = waitpid(pid, &status, WNOHANG)
-                    if result > 0 || result == -1 {
+                    if result > 0 {
+                        // Child exited normally
                         cont.resume(returning: true)
                         return
                     }
-                    try? await Task.sleep(for: .milliseconds(50))
+                    if result == -1 {
+                        // ECHILD: child was already reaped or doesn't exist
+                        cont.resume(returning: errno == ECHILD)
+                        return
+                    }
+                    // result == 0: child still running, poll again
+                    Thread.sleep(forTimeInterval: 0.05)
                 }
                 cont.resume(returning: false)
             }

@@ -40,6 +40,8 @@ enum EditorError: Error, LocalizedError, Sendable {
 
 /// Handles file I/O for the editor: open with validation, atomic save,
 /// security-scoped bookmarks, and debounced autosave to a temp file.
+/// M8 fix: @MainActor isolation prevents data race on autosaveTask.
+@MainActor
 final class EditorService {
     private static let logger = Logger(subsystem: "com.codeforge.app", category: "editor")
     private static let maxLines = 50_000
@@ -55,6 +57,14 @@ final class EditorService {
     /// - Validates: exists, regular file (no symlinks), readable, UTF-8, ≤50K lines, .swift/.py
     /// - Returns: Tuple of content string and detected language
     func open(url: URL) throws(EditorError) -> (content: String, language: SourceLanguage) {
+        // H5 fix: start security-scoped resource access for sandboxed builds
+        let didStartAccess = url.startAccessingSecurityScopedResource()
+        defer {
+            if didStartAccess {
+                url.stopAccessingSecurityScopedResource()
+            }
+        }
+
         let path = url.path(percentEncoded: false)
 
         // Symlink check

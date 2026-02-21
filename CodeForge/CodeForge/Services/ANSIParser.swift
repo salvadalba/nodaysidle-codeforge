@@ -18,6 +18,11 @@ nonisolated struct ANSIParser: Sendable {
 
     private(set) var state: State = .ground
     private var paramBuffer: String = ""
+    /// M2 fix: accumulator for multi-byte UTF-8 sequences
+    private var utf8Buffer: [UInt8] = []
+    private var utf8Expected: Int = 0
+    /// L6 fix: OSC string content accumulator
+    private var oscBuffer: String = ""
 
     /// Feed raw terminal output data into the parser, updating the screen buffer.
     mutating func feed(_ data: Data, into buffer: inout VirtualScreenBuffer) {
@@ -65,12 +70,43 @@ nonisolated struct ANSIParser: Sendable {
             // Other C0 control characters — ignore
             break
         default:
-            // Printable character — decode UTF-8 byte by byte
-            // For simplicity, handle ASCII directly; non-ASCII replaced with ?
+            // M2 fix: proper multi-byte UTF-8 handling
             if byte < 0x80 {
+                // ASCII — flush any partial UTF-8 and write directly
+                flushUTF8(into: &buffer)
                 buffer.writeCharacter(Character(UnicodeScalar(byte)))
+            } else if byte & 0xE0 == 0xC0 {
+                // 2-byte sequence lead
+                flushUTF8(into: &buffer)
+                utf8Buffer = [byte]
+                utf8Expected = 2
+            } else if byte & 0xF0 == 0xE0 {
+                // 3-byte sequence lead
+                flushUTF8(into: &buffer)
+                utf8Buffer = [byte]
+                utf8Expected = 3
+            } else if byte & 0xF8 == 0xF0 {
+                // 4-byte sequence lead
+                flushUTF8(into: &buffer)
+                utf8Buffer = [byte]
+                utf8Expected = 4
+            } else if byte & 0xC0 == 0x80, !utf8Buffer.isEmpty {
+                // Continuation byte
+                utf8Buffer.append(byte)
+                if utf8Buffer.count == utf8Expected {
+                    if let str = String(bytes: utf8Buffer, encoding: .utf8),
+                       let char = str.first {
+                        buffer.writeCharacter(char)
+                    } else {
+                        buffer.writeCharacter("\u{FFFD}")
+                    }
+                    utf8Buffer.removeAll()
+                    utf8Expected = 0
+                }
             } else {
-                buffer.writeCharacter("?")
+                // Invalid byte — write replacement character
+                flushUTF8(into: &buffer)
+                buffer.writeCharacter("\u{FFFD}")
             }
         }
     }
@@ -251,15 +287,47 @@ nonisolated struct ANSIParser: Sendable {
 
     // MARK: - OSC State
 
+    // L6 fix: collect and parse OSC strings for title/CWD changes
     private mutating func processOSC(_ byte: UInt8) {
         switch byte {
         case 0x07: // BEL — terminates OSC
+            handleOSCComplete()
             state = .ground
         case 0x1B: // ESC — might be ESC \ (ST)
+            handleOSCComplete()
             state = .escape
         default:
-            // Collect OSC string (title changes, etc.) — ignore for now
+            oscBuffer.append(Character(UnicodeScalar(byte)))
+        }
+    }
+
+    /// Parse completed OSC sequence. Stores title/CWD for external consumption.
+    private(set) var lastTitle: String?
+    private(set) var lastWorkingDirectory: String?
+
+    private mutating func handleOSCComplete() {
+        defer { oscBuffer = "" }
+        guard !oscBuffer.isEmpty else { return }
+        // OSC format: "code;payload"
+        let parts = oscBuffer.split(separator: ";", maxSplits: 1)
+        guard let codeStr = parts.first, let code = Int(codeStr) else { return }
+        let payload = parts.count > 1 ? String(parts[1]) : ""
+        switch code {
+        case 0, 2: // Set window title
+            lastTitle = payload
+        case 7: // Set working directory (file://host/path)
+            lastWorkingDirectory = payload
+        default:
             break
+        }
+    }
+
+    /// M2 fix: flush any incomplete UTF-8 bytes as replacement characters
+    private mutating func flushUTF8(into buffer: inout VirtualScreenBuffer) {
+        if !utf8Buffer.isEmpty {
+            buffer.writeCharacter("\u{FFFD}")
+            utf8Buffer.removeAll()
+            utf8Expected = 0
         }
     }
 
@@ -268,5 +336,8 @@ nonisolated struct ANSIParser: Sendable {
     mutating func reset() {
         state = .ground
         paramBuffer = ""
+        utf8Buffer.removeAll()
+        utf8Expected = 0
+        oscBuffer = ""
     }
 }

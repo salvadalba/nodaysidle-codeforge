@@ -5,8 +5,10 @@ import Foundation
 ///
 /// Holds the virtual screen buffer, converts it to NSAttributedString
 /// for rendering, and tracks terminal dimensions and run state.
+/// C6 fix: @MainActor isolation replaces @unchecked Sendable.
 @Observable
-final class TerminalModel: @unchecked Sendable {
+@MainActor
+final class TerminalModel {
     /// The virtual screen buffer holding all terminal cells.
     var buffer: VirtualScreenBuffer
 
@@ -37,9 +39,14 @@ final class TerminalModel: @unchecked Sendable {
     func attributedOutput(font: NSFont, showScrollback: Bool = true) -> NSAttributedString {
         let lines: [[Cell]]
         if showScrollback {
-            let start = max(0, buffer.scrollback.count - scrollOffset)
-            let scrollbackSlice = buffer.scrollback.suffix(from: max(0, start - maxVisibleScrollback()))
-                .prefix(maxVisibleScrollback())
+            // M3 fix: clear scrollback viewport calculation
+            let scrollbackCount = buffer.scrollback.count
+            let maxVisible = min(scrollbackCount, 500)
+            // scrollOffset = 0 means at bottom; increasing scrolls up
+            let clampedOffset = min(scrollOffset, scrollbackCount)
+            let visibleEnd = max(0, scrollbackCount - clampedOffset)
+            let visibleStart = max(0, visibleEnd - maxVisible)
+            let scrollbackSlice = buffer.scrollback[visibleStart..<visibleEnd]
             lines = Array(scrollbackSlice) + buffer.screen
         } else {
             lines = buffer.screen
@@ -69,11 +76,6 @@ final class TerminalModel: @unchecked Sendable {
         }
 
         return result
-    }
-
-    private func maxVisibleScrollback() -> Int {
-        // Show up to 500 lines of scrollback above the screen
-        min(buffer.scrollback.count, 500)
     }
 
     private func attributes(for style: CellStyle, font: NSFont) -> [NSAttributedString.Key: Any] {

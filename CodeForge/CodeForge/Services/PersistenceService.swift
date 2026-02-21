@@ -182,6 +182,8 @@ final class PersistenceService {
         if let existing = try context.fetch(descriptor).first {
             existing.encryptedMessages = encrypted
             try context.save()
+            // M4 fix: run eviction on updates too, not just inserts
+            try evictConversations()
             return
         }
 

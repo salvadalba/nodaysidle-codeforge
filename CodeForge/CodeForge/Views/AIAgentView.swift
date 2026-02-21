@@ -218,13 +218,26 @@ struct AIAgentView: View {
         model.finalizeAssistantMessage()
     }
 
+    // M9 fix: guard against concurrent load attempts
     private func ensureModelLoaded() async {
-        guard model.modelState != .loaded else { return }
+        switch model.modelState {
+        case .loaded, .loading, .downloading:
+            // Already loaded or in progress — wait for completion
+            if model.modelState == .loaded { return }
+            // Spin-wait briefly for an in-flight load to complete
+            for _ in 0..<100 {
+                try? await Task.sleep(for: .milliseconds(50))
+                if model.modelState == .loaded { return }
+            }
+            return
+        case .notLoaded, .error:
+            break
+        }
         model.modelState = .loading
         do {
             try await inferenceActor.loadModel { progress in
                 Task { @MainActor in
-                    model.modelState = .downloading(
+                    self.model.modelState = .downloading(
                         progress: progress.fractionCompleted
                     )
                 }
@@ -265,7 +278,7 @@ private struct MessageBubble: View {
 
             Text(message.content)
                 .padding(10)
-                .background(message.role == .user ? Color.blue.opacity(0.2) : Color.gray.opacity(0.15))
+                .background(message.role == .user ? Color.blue.opacity(0.25) : Color.gray.opacity(0.2))
                 .clipShape(RoundedRectangle(cornerRadius: 12))
                 .font(.system(.body, design: .monospaced))
                 .accessibilityLabel("\(message.role == .user ? "You" : "Assistant"): \(message.content)")
@@ -282,11 +295,11 @@ private struct StreamingBubble: View {
         HStack {
             Text(text)
                 .padding(10)
-                .background(Color.gray.opacity(0.15))
+                .background(Color.gray.opacity(0.2))
                 .clipShape(RoundedRectangle(cornerRadius: 12))
                 .font(.system(.body, design: .monospaced))
             Spacer(minLength: 40)
         }
-        .opacity(0.8)
+        .opacity(0.85)
     }
 }

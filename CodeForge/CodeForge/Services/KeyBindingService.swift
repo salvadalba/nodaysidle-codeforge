@@ -1,6 +1,7 @@
 import AppKit
 import Foundation
 import OSLog
+import SwiftData
 import SwiftUI
 
 /// Manages keyboard shortcuts loaded from SwiftData KeyBinding entries.
@@ -29,13 +30,20 @@ final class KeyBindingService {
     ]
 
     /// Load bindings from persistence, falling back to defaults if none exist.
+    // M10 fix: persist default bindings to SwiftData on first load
     func loadBindings(from persistenceService: PersistenceService) {
         do {
             let stored = try persistenceService.fetchKeyBindings()
             if stored.isEmpty {
-                bindings = Self.defaults.map { def in
+                let defaults = Self.defaults.map { def in
                     KeyBinding(action: def.action, keyCombination: def.keyCombination)
                 }
+                let context = persistenceService.modelContainer.mainContext
+                for binding in defaults {
+                    context.insert(binding)
+                }
+                try? context.save()
+                bindings = defaults
             } else {
                 bindings = stored
             }

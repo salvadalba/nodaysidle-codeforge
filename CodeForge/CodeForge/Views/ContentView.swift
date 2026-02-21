@@ -107,7 +107,26 @@ struct ContentView: View {
 
     // MARK: - File Actions
 
+    // M1 fix: confirm before discarding unsaved changes
     private func openFile() {
+        if editorModel.isDirty {
+            let alert = NSAlert()
+            alert.messageText = "Unsaved Changes"
+            alert.informativeText = "You have unsaved changes. Do you want to save before opening a new file?"
+            alert.addButton(withTitle: "Save")
+            alert.addButton(withTitle: "Don't Save")
+            alert.addButton(withTitle: "Cancel")
+            let response = alert.runModal()
+            switch response {
+            case .alertFirstButtonReturn:
+                saveFile()
+            case .alertThirdButtonReturn:
+                return
+            default:
+                break
+            }
+        }
+
         guard let url = editorService.showOpenPanel() else { return }
         do {
             let (content, language) = try editorService.open(url: url)

@@ -18,10 +18,28 @@ extension Logger {
 @main
 struct CodeForgeApp: App {
     @State private var isReady = false
+    @State private var bootstrapError: String?
 
     var body: some Scene {
         WindowGroup {
-            if isReady, let service = PersistenceService.shared {
+            if let error = bootstrapError {
+                // C3 fix: show error UI instead of fatalError on persistence failure
+                VStack(spacing: 16) {
+                    Image(systemName: "exclamationmark.triangle")
+                        .font(.system(size: 48))
+                        .foregroundStyle(.orange)
+                    Text("CodeForge failed to start")
+                        .font(.title2)
+                    Text(error)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal)
+                    Button("Quit") { NSApplication.shared.terminate(nil) }
+                        .keyboardShortcut("q")
+                }
+                .frame(minWidth: 400, minHeight: 200)
+            } else if isReady, let service = PersistenceService.shared {
                 ContentView()
                     .modelContainer(service.modelContainer)
                     .frame(minWidth: 800, minHeight: 500)
@@ -32,7 +50,7 @@ struct CodeForgeApp: App {
                             try await PersistenceService.bootstrap()
                             isReady = true
                         } catch {
-                            fatalError("PersistenceService bootstrap failed: \(error)")
+                            bootstrapError = error.localizedDescription
                         }
                     }
             }

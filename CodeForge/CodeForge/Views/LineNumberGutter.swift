@@ -8,10 +8,12 @@ import Foundation
 final class LineNumberGutter: NSRulerView {
     private weak var textView: NSTextView?
 
-    private let gutterBackgroundColor = NSColor(red: 0.10, green: 0.10, blue: 0.12, alpha: 1.0)
-    private let lineNumberColor = NSColor(white: 0.40, alpha: 1.0)
-    private let currentLineNumberColor = NSColor(white: 0.85, alpha: 1.0)
-    private let currentLineHighlightColor = NSColor(white: 1.0, alpha: 0.05)
+    // UI brightness fix: warmer gutter with more contrast
+    private let gutterBackgroundColor = NSColor(red: 0.11, green: 0.12, blue: 0.15, alpha: 1.0)
+    private let gutterBorderColor = NSColor(white: 0.22, alpha: 1.0)
+    private let lineNumberColor = NSColor(white: 0.48, alpha: 1.0)
+    private let currentLineNumberColor = NSColor(white: 0.92, alpha: 1.0)
+    private let currentLineHighlightColor = NSColor(white: 1.0, alpha: 0.08)
     private let gutterFont = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular)
     private let padding: CGFloat = 8.0
 
@@ -81,13 +83,22 @@ final class LineNumberGutter: NSRulerView {
         gutterBackgroundColor.setFill()
         rect.fill()
 
+        // Draw right border for visual separation from editor
+        gutterBorderColor.setStroke()
+        let borderPath = NSBezierPath()
+        borderPath.move(to: NSPoint(x: ruleThickness - 0.5, y: rect.minY))
+        borderPath.line(to: NSPoint(x: ruleThickness - 0.5, y: rect.maxY))
+        borderPath.lineWidth = 1.0
+        borderPath.stroke()
+
         let content = textView.string as NSString
         let visibleRect = scrollView?.documentVisibleRect ?? textView.visibleRect
         let glyphRange = layoutManager.glyphRange(forBoundingRect: visibleRect, in: textContainer)
         let charRange = layoutManager.characterRange(forGlyphRange: glyphRange, actualGlyphRange: nil)
 
-        // Determine current line (for highlight)
-        let cursorLocation = textView.selectedRange().location
+        // L4 fix: guard against NSNotFound cursor location
+        let rawCursorLocation = textView.selectedRange().location
+        let cursorLocation = (rawCursorLocation == NSNotFound) ? 0 : rawCursorLocation
         let currentLine = lineIndex(for: cursorLocation, in: content as String)
 
         // Walk through visible lines

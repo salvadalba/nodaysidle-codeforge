@@ -13,14 +13,11 @@ nonisolated final class ModelDownloader: Sendable {
     static let defaultModelID = "mlx-community/Qwen2.5-Coder-7B-Instruct-4bit"
 
     /// Local directory for downloaded models.
+    // L7 fix: applicationSupportDirectory always available on macOS — remove dead fallback
     static var modelsDirectory: URL {
-        guard let appSupport = FileManager.default.urls(
+        FileManager.default.urls(
             for: .applicationSupportDirectory, in: .userDomainMask
-        ).first else {
-            return URL(filePath: NSHomeDirectory())
-                .appendingPathComponent("Library/Application Support/CodeForge/Models", isDirectory: true)
-        }
-        return appSupport.appendingPathComponent("CodeForge/Models", isDirectory: true)
+        )[0].appendingPathComponent("CodeForge/Models", isDirectory: true)
     }
 
     /// Check if a model is already downloaded locally.

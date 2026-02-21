@@ -56,8 +56,11 @@ struct EditSuggestion: Codable, Sendable, Equatable, Identifiable {
                 continue
             }
 
+            // H8 fix: validate byte range is non-negative and non-inverted
             let rangeParts = range.split(separator: "-").compactMap { Int($0.trimmingCharacters(in: .whitespaces)) }
-            guard rangeParts.count == 2 else { continue }
+            guard rangeParts.count == 2,
+                  rangeParts[0] >= 0,
+                  rangeParts[1] > rangeParts[0] else { continue }
 
             suggestions.append(EditSuggestion(
                 startByte: rangeParts[0],
@@ -86,7 +89,9 @@ struct EditSuggestion: Codable, Sendable, Equatable, Identifiable {
         guard let start = content.range(of: "\(name):") else { return nil }
         let after = content[start.upperBound...]
         guard let end = after.range(of: "\(terminator):") else {
-            return String(after)
+            // M7 fix: if terminator is missing, limit to 2000 chars to prevent
+            // malformed AI output from producing corrupt suggestions
+            return String(after.prefix(2000))
         }
         return String(after[after.startIndex..<end.lowerBound])
     }
